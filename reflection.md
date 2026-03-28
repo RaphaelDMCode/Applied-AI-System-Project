@@ -6,11 +6,13 @@
 
 - Briefly describe your initial UML design.
 - What classes did you include, and what responsibilities did you assign to each?
+    → I created 4 classes, that being [Owner], [Pet], [Task], [Schedule]. The jobs of [Owner], [Pet] and [Task] is to get the Data/Inputs from the User, then [Schedule] gathers the Infos from those 3 classes and creates a Daily Plan of it, keeping in mind of the Constraints and Factors that affects it.
 
 **b. Design changes**
 
 - Did your design change during implementation?
 - If yes, describe at least one change and why you made it.
+    → I did made some changes based on the CoPilot's Feedback. One such change is adding a Pet Attribute in [Owner] so that it is able to store the Pets the Owners own and Vise Versa where it adds an Owner Attribute to [Pet] to know who owns it, thereby setting the relationship between the Owner and the Pet.
 
 ---
  → Enter the Owner and Pet Information.

@@ -45,3 +45,8 @@ pip install -r requirements.txt
 ## Smarter Scheduling
 
 The three main features are the Owner, Pet, Task, and Schedule Classes and the Functions included in it. The Owner class is the most important class in the program by how it is the one where it stores the information/data where the class Schedule and Pet get their data from, in which Tasks get data from Pet. The featured functions are functions that make the readibility and performance easy.
+
+## Testing PawPal+
+
+python -m pytest
+During the testing parts, it basically covered the three suite mentioned in Phase 5 Step 2, Sorting Correctness where it ensures that the teasks are returned in chronological order, Recurrence logic to confirm that completing a daily creates new task, and finnaly Conflict Detection to ensure the my Schedule class flags a conflict of duplicate datas. The reason for this because I interpreted the test functions as the testing and verifying of the core behaviors. Unless I'm wrong. I would say about 4 starts because even if it says that all passed, I know that there are some things that may cause another error and such.

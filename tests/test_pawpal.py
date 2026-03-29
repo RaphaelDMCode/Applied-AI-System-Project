@@ -1,5 +1,6 @@
 import pytest
-from pawpal_system import Task, Pet
+from datetime import date, timedelta
+from pawpal_system import Task, Pet, Owner, Schedule
 
 
 def test_task_completion_changes_status():
@@ -19,3 +20,160 @@ def test_add_task_to_pet_increases_task_count():
 
     assert len(pet.getTasks()) == 1
     assert pet.getTasks()[0] == task
+
+
+# --- Sorting Correctness ---
+
+def test_sort_by_time_returns_chronological_order():
+    """Tasks should come back earliest-time-first after sort_by_time()."""
+    owner = Owner(name="Alex", timeAvailability=8.0)
+    schedule = Schedule(owner)
+
+    t1 = Task(name="Afternoon walk", duration=0.5, priority="medium", time="14:00")
+    t2 = Task(name="Morning feed",   duration=0.25, priority="high",   time="07:00")
+    t3 = Task(name="Evening meds",   duration=0.1,  priority="high",   time="19:30")
+
+    schedule.addTask(t1)
+    schedule.addTask(t2)
+    schedule.addTask(t3)
+
+    sorted_tasks = schedule.sort_by_time()
+    times = [t.time for t in sorted_tasks]
+    assert times == sorted(times), f"Expected chronological order, got {times}"
+
+
+def test_generate_schedule_sorts_by_priority_then_duration():
+    """generateSchedule() should place high-priority tasks before lower ones."""
+    owner = Owner(name="Sam", timeAvailability=10.0)
+    pet = Pet(name="Rex", type="Dog", ownerPreferences="None")
+    owner.addPet(pet)
+
+    low_long  = Task(name="Bath",       duration=2.0, priority="low")
+    high_short = Task(name="Feed",      duration=0.5, priority="high")
+    med_task   = Task(name="Play",      duration=1.0, priority="medium")
+
+    pet.addTask(low_long)
+    pet.addTask(high_short)
+    pet.addTask(med_task)
+
+    schedule = Schedule(owner)
+    schedule.generateSchedule()
+
+    priorities = [t.getPriority() for t in schedule.getTasks()]
+    # All high tasks must appear before any medium; all medium before any low
+    seen = set()
+    for p in priorities:
+        assert p not in seen or p == priorities[priorities.index(p)], \
+            "Priority order violated"
+        seen.add(p)
+
+    assert priorities[0] == "high", "First task should be highest priority"
+
+
+# --- Recurrence Logic ---
+
+def test_daily_recurrence_creates_next_day_task():
+    """Completing a daily task should add a new task due the following day."""
+    today = date.today()
+    pet = Pet(name="Luna", type="Cat", ownerPreferences="None")
+    task = Task(
+        name="Morning feed",
+        duration=0.25,
+        priority="high",
+        recurrence="daily",
+        due_date=today,
+    )
+    pet.addTask(task)
+
+    task.markCompleted()
+
+    incomplete = pet.getIncompleteTasks()
+    assert len(incomplete) == 1, "One new recurring task should have been created"
+    assert incomplete[0].due_date == today + timedelta(days=1), \
+        "Next task should be due tomorrow"
+    assert not incomplete[0].isCompleted(), "New recurring task should be incomplete"
+
+
+def test_weekly_recurrence_creates_next_week_task():
+    """Completing a weekly task should add a new task due seven days later."""
+    today = date.today()
+    pet = Pet(name="Max", type="Dog", ownerPreferences="None")
+    task = Task(
+        name="Grooming",
+        duration=1.0,
+        priority="medium",
+        recurrence="weekly",
+        due_date=today,
+    )
+    pet.addTask(task)
+
+    task.markCompleted()
+
+    incomplete = pet.getIncompleteTasks()
+    assert len(incomplete) == 1
+    assert incomplete[0].due_date == today + timedelta(weeks=1), \
+        "Next task should be due in one week"
+
+
+def test_non_recurring_task_does_not_spawn_new_task():
+    """A task with no recurrence should NOT create a follow-up task."""
+    pet = Pet(name="Nemo", type="Fish", ownerPreferences="None")
+    task = Task(name="Water change", duration=0.5, priority="low", recurrence=None)
+    pet.addTask(task)
+
+    task.markCompleted()
+
+    assert len(pet.getIncompleteTasks()) == 0, \
+        "No follow-up task expected for a non-recurring task"
+
+
+# --- Conflict Detection ---
+
+def test_add_task_returns_warning_on_time_conflict():
+    """addTask() should return a warning string when two tasks share a time slot."""
+    owner = Owner(name="Jordan", timeAvailability=8.0)
+    pet = Pet(name="Buddy", type="Dog", ownerPreferences="None")
+    owner.addPet(pet)
+    schedule = Schedule(owner)
+
+    t1 = Task(name="Feed",   duration=0.5, priority="high",   time="08:00")
+    t2 = Task(name="Walk",   duration=1.0, priority="medium", time="08:00")
+    t1.pet = pet
+    t2.pet = pet
+
+    schedule.addTask(t1)
+    warning = schedule.addTask(t2)
+
+    assert warning is not None, "Expected a conflict warning"
+    assert "08:00" in warning, "Warning should mention the conflicting time"
+
+
+def test_get_conflicts_returns_conflicting_pairs():
+    """getConflicts() should list every pair of tasks at the same time."""
+    owner = Owner(name="Casey", timeAvailability=8.0)
+    schedule = Schedule(owner)
+
+    t1 = Task(name="Feed",  duration=0.5, priority="high",   time="09:00")
+    t2 = Task(name="Walk",  duration=1.0, priority="medium", time="09:00")
+    t3 = Task(name="Meds",  duration=0.1, priority="high",   time="11:00")
+
+    schedule.addTask(t1)
+    schedule.addTask(t2)
+    schedule.addTask(t3)
+
+    conflicts = schedule.getConflicts()
+    assert len(conflicts) == 1, "Exactly one conflicting pair expected"
+    pair = conflicts[0]
+    assert t1 in pair and t2 in pair, "Conflict should be between t1 and t2"
+
+
+def test_has_conflicts_false_when_no_duplicates():
+    """hasConflicts() should return False when all tasks have unique times."""
+    owner = Owner(name="Riley", timeAvailability=8.0)
+    schedule = Schedule(owner)
+
+    schedule.addTask(Task(name="Feed", duration=0.5, priority="high",   time="07:00"))
+    schedule.addTask(Task(name="Walk", duration=1.0, priority="medium", time="12:00"))
+    schedule.addTask(Task(name="Meds", duration=0.1, priority="high",   time="20:00"))
+
+    assert not schedule.hasConflicts(), "No conflicts expected with unique times"

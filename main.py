@@ -16,11 +16,12 @@ def main():
     owner.addPet(pet2)
 
     # Tasks added out of order by time to demonstrate sort_by_time()
-    task1 = Task(name="Evening brush",    duration=0.5, priority="low",    time="18:00")
-    task2 = Task(name="Vet appointment",  duration=2.0, priority="medium", time="10:30")
-    task3 = Task(name="Litter clean",     duration=0.25, priority="high",  time="14:00")
-    task4 = Task(name="Morning walk",     duration=1.0, priority="high",   time="07:00")
-    task5 = Task(name="Play session",     duration=0.5, priority="low",    time="16:00")
+    # Durations are in minutes (matching the web app and scheduler)
+    task1 = Task(name="Evening brush",    duration=30,  priority="low",    time="18:00")
+    task2 = Task(name="Vet appointment",  duration=120, priority="medium", time="10:30")
+    task3 = Task(name="Litter clean",     duration=15,  priority="high",   time="14:00")
+    task4 = Task(name="Morning walk",     duration=60,  priority="high",   time="07:00")
+    task5 = Task(name="Play session",     duration=30,  priority="low",    time="16:00")
 
     pet1.addTask(task1)
     pet1.addTask(task2)
@@ -34,7 +35,7 @@ def main():
     # Recurring task demo — daily task due today
     task_daily = Task(
         name="Feed Bella",
-        duration=0.25,
+        duration=15,
         priority="high",
         time="08:00",
         recurrence="daily",
@@ -45,7 +46,7 @@ def main():
     # Weekly task due today
     task_weekly = Task(
         name="Groom Milo",
-        duration=0.5,
+        duration=30,
         priority="medium",
         time="11:00",
         recurrence="weekly",
@@ -74,11 +75,11 @@ def print_pretty_schedule(schedule: Schedule) -> None:
 
     for pet_name, tasks in by_pet.items():
         print(f"Pet: {pet_name}")
-        print("  Task                 | Duration | Priority | Status")
+        print("  Task                 | Dur(min) | Priority | Status")
         print("  ---------------------+----------+----------+--------")
         for t in tasks:
             status = "[x]" if t.isCompleted() else "[ ]"
-            print(f"  {t.name:<21} | {t.duration:>8.2f} | {t.priority:<8} | {status}")
+            print(f"  {t.name:<21} | {t.duration:>8.0f} | {t.priority:<8} | {status}")
         print()
 
     total_time = schedule.getTotalScheduledTime()
@@ -87,8 +88,8 @@ def print_pretty_schedule(schedule: Schedule) -> None:
 
     print("---- Summary ----")
     print(f"Total tasks : {len(schedule.getTasks())}")
-    print(f"Total time  : {total_time:.2f}h")
-    print(f"Available   : {available_time:.2f}h")
+    print(f"Total time  : {total_time:.0f}min")
+    print(f"Available   : {available_time * 60:.0f}min")
     print(f"Capacity    : {fits}")
     print("============================")
 
@@ -151,8 +152,8 @@ def print_conflict_demo(schedule: Schedule, pet1: Pet, pet2: Pet) -> None:
     print("==== Conflict Detection ====")
 
     # Two tasks deliberately scheduled at the same time across different pets
-    task_same_time_1 = Task(name="Bath time",   duration=0.5,  priority="medium", time="14:00")
-    task_same_time_2 = Task(name="Feeding time", duration=0.25, priority="high",   time="14:00")
+    task_same_time_1 = Task(name="Bath time",   duration=30, priority="medium", time="14:00")
+    task_same_time_2 = Task(name="Feeding time", duration=15, priority="high",  time="14:00")
 
     pet1.addTask(task_same_time_1)
     pet2.addTask(task_same_time_2)

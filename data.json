@@ -1,5 +1,15 @@
 {
-  "name": "Jordan",
-  "timeAvailability": 4.0,
-  "pets": []
+  "name": "Keith",
+  "timeAvailability": 5.0,
+  "pets": [
+    {
+      "name": "Haru",
+      "type": "dog",
+      "ownerPreferences": "Prefers morning walks",
+      "breed": "Shiba Inu",
+      "age": 1.0,
+      "weight": 10.0,
+      "tasks": []
+    }
+  ]
 }

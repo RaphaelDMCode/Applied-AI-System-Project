@@ -24,7 +24,7 @@ if "owner" not in st.session_state and "session_choice" not in st.session_state:
 
 # ── Owner setup ────────────────────────────────────────────────────────────────
 st.subheader("Owner")
-owner_name = st.text_input("Owner name", value="Jordan")
+owner_name = st.text_input("Owner name", value="", placeholder="Input Name Here")
 time_available = st.number_input("Available time today (hours)", min_value=0.5, max_value=24.0, value=4.0, step=0.5)
 
 if st.button("Set / Update Owner"):

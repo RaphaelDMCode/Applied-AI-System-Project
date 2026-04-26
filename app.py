@@ -100,6 +100,51 @@ if pets:
         hide_index=True,
     )
 
+    st.caption("Edit or remove a pet")
+    pet_labels = [f"{p.getName()} ({p.getType()})" for p in pets]
+    selected_pet_label = st.selectbox("Select pet", pet_labels, key="pet_edit_select")
+    selected_pet = pets[pet_labels.index(selected_pet_label)]
+
+    with st.expander("Edit selected pet"):
+        ep_col1, ep_col2, ep_col3 = st.columns(3)
+        with ep_col1:
+            ep_name = st.text_input("Pet name", value=selected_pet.getName(), key="ep_name")
+        with ep_col2:
+            ep_species_opts = ["dog", "cat", "other"]
+            ep_species = st.selectbox("Species", ep_species_opts,
+                                      index=ep_species_opts.index(selected_pet.getType()) if selected_pet.getType() in ep_species_opts else 2,
+                                      key="ep_species")
+        with ep_col3:
+            ep_prefs = st.text_input("Owner preferences", value=selected_pet.getPreferences(), key="ep_prefs")
+
+        ep_col4, ep_col5, ep_col6 = st.columns(3)
+        with ep_col4:
+            ep_breed = st.text_input("Breed", value=selected_pet.getBreed(), key="ep_breed")
+        with ep_col5:
+            ep_age = st.number_input("Age (years)", min_value=0.0, max_value=30.0,
+                                     value=float(selected_pet.getAge()), step=0.5, key="ep_age")
+        with ep_col6:
+            ep_weight = st.number_input("Weight (lbs)", min_value=0.1, max_value=300.0,
+                                        value=max(0.1, float(selected_pet.getWeight())), step=0.5, key="ep_weight")
+
+        if st.button("Update Pet"):
+            selected_pet.name = ep_name
+            selected_pet.type = ep_species
+            selected_pet.ownerPreferences = ep_prefs
+            selected_pet.breed = ep_breed
+            selected_pet.age = ep_age
+            selected_pet.weight = ep_weight
+            owner.save_to_json()
+            st.success(f"Updated **{ep_name}**.")
+            st.rerun()
+
+    if st.button("Remove Selected Pet", type="secondary", key="remove_pet_btn"):
+        owner.removePet(selected_pet)
+        owner.save_to_json()
+        st.session_state.pop("schedule", None)
+        st.success(f"Removed **{selected_pet.getName()}**.")
+        st.rerun()
+
 st.divider()
 
 # ── Add a Task ─────────────────────────────────────────────────────────────────
@@ -107,6 +152,13 @@ st.subheader("Add a Task")
 
 PRIORITY_BADGE = {"high": "🔴 High", "medium": "🟡 Medium", "low": "🟢 Low"}
 DONE_BADGE = {True: "✅", False: "⬜"}
+
+def _to_12h(t: str) -> str:
+    try:
+        h, m = map(int, t.split(":"))
+        return f"{h % 12 or 12}:{m:02d} {'AM' if h < 12 else 'PM'}"
+    except Exception:
+        return t
 
 if not pets:
     st.info("Add at least one pet before scheduling tasks.")
@@ -134,14 +186,22 @@ else:
     preferred_time_str = "00:00"
     if use_preferred_time:
         import datetime as dt
-        preferred_time_val = st.time_input("Preferred start time", value=dt.time(8, 0))
-        preferred_time_str = preferred_time_val.strftime("%H:%M")
+        _time_opts = [
+            f"{_h % 12 or 12}:{_m:02d} {'AM' if _h < 12 else 'PM'}"
+            for _h in range(24) for _m in (0, 30)
+        ]
+        _selected_time = st.selectbox(
+            "Preferred start time", _time_opts,
+            index=_time_opts.index("8:00 AM"),
+        )
+        preferred_time_str = dt.datetime.strptime(_selected_time, "%I:%M %p").strftime("%H:%M")
         st.caption("The AI agent will try to honour this time when building your schedule.")
 
     if st.button("Add Task"):
         recurrence_val = None if recurrence_input == "none" else recurrence_input
         new_task = Task(task_title, int(duration), priority,
                         time=preferred_time_str,
+                        has_preferred_time=use_preferred_time,
                         recurrence=recurrence_val,
                         due_date=due_date_input)
         try:
@@ -161,6 +221,11 @@ else:
                     pet_name = t.pet.getName() if t.pet else "—"
                     st.write(f"- **{t.getName()}** ({pet_name}) — due {t.due_date}")
 
+        display_tasks = all_tasks
+
+        if "task_editor_ver" not in st.session_state:
+            st.session_state.task_editor_ver = 0
+
         st.caption("All tasks across pets")
         task_rows = [
             {
@@ -168,79 +233,118 @@ else:
                 "Task": t.getName(),
                 "Duration (min)": t.getDuration(),
                 "Priority": PRIORITY_BADGE.get(t.getPriority(), t.getPriority()),
+                "Preferred Time": (
+                    f"{int(t.time.split(':')[0]) % 12 or 12}:{t.time.split(':')[1]} "
+                    f"{'AM' if int(t.time.split(':')[0]) < 12 else 'PM'}"
+                    if t.has_preferred_time else "—"
+                ),
                 "Recurrence": t.recurrence or "—",
                 "Due Date": str(t.due_date),
                 "Status": "⚠️ Overdue" if t.isOverdue() else ("✅ Done" if t.isCompleted() else "—"),
                 "Done": t.isCompleted(),
             }
-            for t in all_tasks
+            for t in display_tasks
         ]
         edited_tasks = st.data_editor(
             task_rows,
             column_config={"Done": st.column_config.CheckboxColumn("Done", default=False)},
-            disabled=["Pet", "Task", "Duration (min)", "Priority", "Recurrence", "Due Date", "Status"],
+            disabled=["Pet", "Task", "Duration (min)", "Priority", "Preferred Time", "Recurrence", "Due Date", "Status"],
             use_container_width=True,
             hide_index=True,
-            key="all_tasks_editor",
+            key=f"all_tasks_editor_{st.session_state.task_editor_ver}",
         )
         changed = False
         for i, row in enumerate(edited_tasks):
-            if row["Done"] and not all_tasks[i].isCompleted():
-                all_tasks[i].markCompleted()
+            task = display_tasks[i]
+            if row["Done"] and not task.isCompleted():
+                task.completed = True
+                changed = True
+            elif not row["Done"] and task.isCompleted():
+                task.completed = False
                 changed = True
         if changed:
             owner.save_to_json()
+            st.session_state.task_editor_ver += 1
             st.rerun()
 
-        st.caption("Edit or delete a task")
-        task_labels = [
-            f"{i + 1}. {t.pet.getName()} — {t.getName()} ({t.getDuration()} min)"
-            for i, t in enumerate(all_tasks)
-        ]
-        selected_label = st.selectbox("Select task", task_labels, key="edit_select")
-        selected_task = all_tasks[task_labels.index(selected_label)]
+        if display_tasks:
+            import datetime as dt
+            st.caption("Edit or delete a task")
+            task_labels = [
+                f"{i + 1}. {t.pet.getName()} — {t.getName()} ({t.getDuration()} min)"
+                for i, t in enumerate(display_tasks)
+            ]
+            selected_label = st.selectbox("Select task", task_labels, key="edit_select")
+            selected_idx = task_labels.index(selected_label)
+            selected_task = display_tasks[selected_idx]
+            _kp = f"e{selected_idx}"
 
-        with st.expander("Edit selected task"):
-            edit_col1, edit_col2, edit_col3 = st.columns(3)
-            with edit_col1:
-                new_title = st.text_input("Title", value=selected_task.getName(), key="edit_title")
-            with edit_col2:
-                new_duration = st.number_input("Duration (min)", min_value=1, max_value=480,
-                                               value=int(selected_task.getDuration()), key="edit_dur")
-            with edit_col3:
-                pri_options = ["low", "medium", "high"]
-                new_priority = st.selectbox("Priority", pri_options,
-                                            index=pri_options.index(selected_task.getPriority()),
-                                            key="edit_pri")
+            with st.expander("Edit selected task"):
+                edit_col1, edit_col2, edit_col3 = st.columns(3)
+                with edit_col1:
+                    new_title = st.text_input("Title", value=selected_task.getName(), key=f"{_kp}_title")
+                with edit_col2:
+                    new_duration = st.number_input("Duration (min)", min_value=1, max_value=480,
+                                                   value=int(selected_task.getDuration()), key=f"{_kp}_dur")
+                with edit_col3:
+                    pri_options = ["low", "medium", "high"]
+                    new_priority = st.selectbox("Priority", pri_options,
+                                                index=pri_options.index(selected_task.getPriority()),
+                                                key=f"{_kp}_pri")
 
-            edit_col4, edit_col5 = st.columns(2)
-            with edit_col4:
-                recur_options = ["none", "daily", "weekly"]
-                current_recur = selected_task.recurrence or "none"
-                new_recurrence = st.selectbox("Recurrence", recur_options,
-                                              index=recur_options.index(current_recur),
-                                              key="edit_recur")
-            with edit_col5:
-                new_due_date = st.date_input("Due date", value=selected_task.due_date, key="edit_due")
+                edit_col4, edit_col5 = st.columns(2)
+                with edit_col4:
+                    recur_options = ["none", "daily", "weekly"]
+                    current_recur = selected_task.recurrence or "none"
+                    new_recurrence = st.selectbox("Recurrence", recur_options,
+                                                  index=recur_options.index(current_recur),
+                                                  key=f"{_kp}_recur")
+                with edit_col5:
+                    new_due_date = st.date_input("Due date", value=selected_task.due_date, key=f"{_kp}_due")
 
-            if st.button("Update Task"):
-                selected_task.name = new_title
-                selected_task.duration = int(new_duration)
-                selected_task.priority = new_priority
-                selected_task.recurrence = None if new_recurrence == "none" else new_recurrence
-                selected_task.due_date = new_due_date
+                _has_pref = selected_task.has_preferred_time
+                edit_use_time = st.checkbox("Set preferred start time", value=_has_pref, key=f"{_kp}_use_time")
+                new_time_for_update = "00:00"
+                if edit_use_time:
+                    edit_col6, _ = st.columns([2, 1])
+                    with edit_col6:
+                        _edit_time_opts = [
+                            f"{_h % 12 or 12}:{_m:02d} {'AM' if _h < 12 else 'PM'}"
+                            for _h in range(24) for _m in (0, 30)
+                        ]
+                        if selected_task.has_preferred_time:
+                            _cur_h, _cur_m = map(int, selected_task.time.split(":"))
+                            _cur_label = f"{_cur_h % 12 or 12}:{_cur_m:02d} {'AM' if _cur_h < 12 else 'PM'}"
+                            _default_idx = _edit_time_opts.index(_cur_label) if _cur_label in _edit_time_opts else _edit_time_opts.index("8:00 AM")
+                        else:
+                            _default_idx = _edit_time_opts.index("8:00 AM")
+                        new_time_label = st.selectbox(
+                            "Preferred start time", _edit_time_opts,
+                            index=_default_idx,
+                            key=f"{_kp}_time",
+                        )
+                        new_time_for_update = dt.datetime.strptime(new_time_label, "%I:%M %p").strftime("%H:%M")
+
+                if st.button("Update Task", key=f"{_kp}_update"):
+                    selected_task.name = new_title
+                    selected_task.duration = int(new_duration)
+                    selected_task.priority = new_priority
+                    selected_task.recurrence = None if new_recurrence == "none" else new_recurrence
+                    selected_task.due_date = new_due_date
+                    selected_task.time = new_time_for_update
+                    selected_task.has_preferred_time = edit_use_time
+                    owner.save_to_json()
+                    st.session_state.pop("schedule", None)
+                    st.success("Task updated.")
+                    st.rerun()
+
+            if st.button("Delete Selected Task", type="secondary", key=f"{_kp}_delete"):
+                if selected_task.pet:
+                    selected_task.pet.removeTask(selected_task)
                 owner.save_to_json()
                 st.session_state.pop("schedule", None)
-                st.success("Task updated.")
+                st.success(f"Deleted **{selected_task.getName()}**.")
                 st.rerun()
-
-        if st.button("Delete Selected Task", type="secondary"):
-            if selected_task.pet:
-                selected_task.pet.removeTask(selected_task)
-            owner.save_to_json()
-            st.session_state.pop("schedule", None)
-            st.success(f"Deleted **{selected_task.getName()}**.")
-            st.rerun()
 
 st.divider()
 
@@ -274,7 +378,7 @@ if "schedule" in st.session_state:
             for a, b in conflicts:
                 a_pet = a.pet.getName() if a.pet else "?"
                 b_pet = b.pet.getName() if b.pet else "?"
-                st.write(f"- **{a.getName()}** ({a_pet}) and **{b.getName()}** ({b_pet}) — both at `{a.time}`")
+                st.write(f"- **{a.getName()}** ({a_pet}) and **{b.getName()}** ({b_pet}) — both at `{_to_12h(a.time)}`")
 
     # ── Overdue warnings via Schedule.getOverdueTasks() ───────────────────────
     overdue_sched = sched.getOverdueTasks()
@@ -312,7 +416,7 @@ if "schedule" in st.session_state:
     if sorted_tasks:
         sched_rows = [
             {
-                "Time": t.time,
+                "Time": _to_12h(t.time),
                 "Pet": t.pet.getName() if t.pet else "—",
                 "Task": t.getName(),
                 "Duration (min)": t.getDuration(),
@@ -335,6 +439,9 @@ if "schedule" in st.session_state:
             if row["Done"] and not sorted_tasks[i].isCompleted():
                 sorted_tasks[i].markCompleted()
                 changed = True
+            elif not row["Done"] and sorted_tasks[i].isCompleted():
+                sorted_tasks[i].markIncomplete()
+                changed = True
         if changed:
             owner.save_to_json()
             st.rerun()
@@ -353,7 +460,7 @@ if "schedule" in st.session_state:
         if slot == "No slot available today":
             st.error("No available slot today for that duration.")
         else:
-            st.success(f"Next available slot: **{slot}** — fits {int(slot_duration)} min")
+            st.success(f"Next available slot: **{_to_12h(slot)}** — fits {int(slot_duration)} min")
 
 st.divider()
 
@@ -409,7 +516,7 @@ else:
                         st.caption(f"{n} task(s) scheduled")
                         if rows:
                             st.dataframe(
-                                [{"Time": r["time"], "Pet": r["pet"], "Task": r["task"],
+                                [{"Time": _to_12h(r["time"]), "Pet": r["pet"], "Task": r["task"],
                                   "Priority": r["priority"], "Duration (min)": r["duration_minutes"]}
                                  for r in rows],
                                 use_container_width=True, hide_index=True,
@@ -422,7 +529,7 @@ else:
                         else:
                             st.caption(f"{n} conflict(s) detected:")
                             for c in result.get("conflicts", []):
-                                st.write(f"- **{c['task_a']}** ({c['pet_a']}) vs **{c['task_b']}** ({c['pet_b']}) — both at `{c['shared_time']}`")
+                                st.write(f"- **{c['task_a']}** ({c['pet_a']}) vs **{c['task_b']}** ({c['pet_b']}) — both at `{_to_12h(c['shared_time'])}`")
 
                     elif tool == "get_overdue_tasks":
                         n = result.get("count", 0)
@@ -444,13 +551,13 @@ else:
                     elif tool == "find_next_slot":
                         slot = result.get("available_slot", "—")
                         dur  = result.get("duration_requested", 0)
-                        st.caption(f"Next open slot for {dur} min: **{slot}**")
+                        st.caption(f"Next open slot for {dur} min: **{_to_12h(slot)}**")
 
                     elif tool == "reschedule_task":
                         if result.get("success"):
                             st.caption(
                                 f"Moved **{result['task']}** ({result['pet']}) "
-                                f"from `{result['moved_from']}` → `{result['moved_to']}`"
+                                f"from `{_to_12h(result['moved_from'])}` → `{_to_12h(result['moved_to'])}`"
                             )
                         else:
                             st.caption(f"⚠️ {result.get('message', 'Reschedule failed.')}")
@@ -465,19 +572,16 @@ else:
 
         st.caption("Proposed schedule (read-only — accept or reject below)")
         st.dataframe(
-            sorted(
-                [
-                    {
-                        "Time":           t["time"],
-                        "Pet":            t["pet"],
-                        "Task":           t["task"],
-                        "Priority":       PRIORITY_BADGE.get(t["priority"], t["priority"]),
-                        "Duration (min)": t["duration_minutes"],
-                    }
-                    for t in st.session_state.agent_proposed
-                ],
-                key=lambda r: r["Time"],
-            ),
+            [
+                {
+                    "Time":           _to_12h(t["time"]),
+                    "Pet":            t["pet"],
+                    "Task":           t["task"],
+                    "Priority":       PRIORITY_BADGE.get(t["priority"], t["priority"]),
+                    "Duration (min)": t["duration_minutes"],
+                }
+                for t in sorted(st.session_state.agent_proposed, key=lambda t: t["time"])
+            ],
             use_container_width=True,
             hide_index=True,
         )

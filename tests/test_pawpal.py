@@ -207,7 +207,7 @@ def agent_result():
 
     sched = Schedule(owner)
     agent = PawPalAgent(sched)
-    explanation, proposed = agent.run()
+    explanation, proposed, _ = agent.run()
     return explanation, proposed, sched
 
 

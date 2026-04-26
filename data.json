@@ -8,15 +8,26 @@
       "ownerPreferences": "Prefers Afternoon Walks",
       "breed": "Shiba Inu",
       "age": 1.0,
-      "weight": 9.0,
+      "weight": 10.0,
       "tasks": [
         {
-          "name": "Morning walk",
-          "duration": 20,
+          "name": "Afternoon Walk",
+          "duration": 15,
           "priority": "high",
+          "time": "13:00",
+          "has_preferred_time": true,
+          "recurrence": "weekly",
+          "due_date": "2026-05-24",
+          "completed": false
+        },
+        {
+          "name": "Play",
+          "duration": 10,
+          "priority": "low",
           "time": "00:00",
-          "recurrence": null,
-          "due_date": "2026-04-23",
+          "has_preferred_time": true,
+          "recurrence": "daily",
+          "due_date": "2026-04-30",
           "completed": false
         }
       ]
@@ -24,11 +35,22 @@
     {
       "name": "El Gato",
       "type": "cat",
-      "ownerPreferences": "Prefers  Afternoon Groom",
+      "ownerPreferences": "None",
       "breed": "Orange",
       "age": 2.0,
-      "weight": 8.0,
-      "tasks": []
+      "weight": 9.0,
+      "tasks": [
+        {
+          "name": "Save El Gato",
+          "duration": 10,
+          "priority": "medium",
+          "time": "13:00",
+          "has_preferred_time": true,
+          "recurrence": null,
+          "due_date": "2026-04-26",
+          "completed": false
+        }
+      ]
     }
   ]
 }

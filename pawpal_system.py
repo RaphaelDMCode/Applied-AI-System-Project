@@ -87,6 +87,7 @@ class Owner:
                             "duration": task.getDuration(),
                             "priority": task.getPriority(),
                             "time": task.time,
+                            "has_preferred_time": task.has_preferred_time,
                             "recurrence": task.recurrence,
                             "due_date": task.due_date.isoformat(),
                             "completed": task.isCompleted(),
@@ -141,6 +142,7 @@ class Owner:
                     duration=task_data["duration"],
                     priority=task_data["priority"],
                     time=task_data.get("time", "00:00"),
+                    has_preferred_time=task_data.get("has_preferred_time", False),
                     recurrence=task_data.get("recurrence"),
                     due_date=due,
                     completed=task_data.get("completed", False),
@@ -238,6 +240,7 @@ class Task:
     due_date: date = field(default_factory=date.today)
     pet: Pet = field(default=None)
     completed: bool = False
+    has_preferred_time: bool = False  # True when the user explicitly chose a start time
 
     def __post_init__(self):
         # Normalize time to HH:MM so string equality is reliable everywhere
@@ -246,6 +249,9 @@ class Task:
             self.time = f"{h:02d}:{m:02d}"
         except (ValueError, AttributeError):
             self.time = "00:00"
+        # Auto-infer flag for code that passes time= directly (e.g. tests, agent.py)
+        if not self.has_preferred_time and self.time != "00:00":
+            self.has_preferred_time = True
 
     def getName(self) -> str:
         """Get the task's name."""
@@ -263,6 +269,10 @@ class Task:
         """Set the task's priority level."""
         self.priority = priority
     
+    def markIncomplete(self) -> None:
+        """Mark this task as not completed."""
+        self.completed = False
+
     def markCompleted(self) -> None:
         """Mark this task as completed and schedule the next occurrence if recurring."""
         self.completed = True
@@ -274,7 +284,10 @@ class Task:
                 )
             next_task = self.next_occurrence()
             if next_task is not None:
-                self.pet.addTask(next_task)
+                try:
+                    self.pet.addTask(next_task)
+                except ValueError:
+                    pass  # next occurrence already exists (task was unchecked then re-checked)
 
     def next_occurrence(self) -> Task:
         """Return a new incomplete Task for the next occurrence based on recurrence."""
@@ -292,6 +305,7 @@ class Task:
             time=self.time,
             recurrence=self.recurrence,
             due_date=next_date,
+            has_preferred_time=self.has_preferred_time,
         )
     
     def isCompleted(self) -> bool:
@@ -328,8 +342,8 @@ class Schedule:
         priority_order = {"high": 0, "medium": 1, "low": 2}
         sort_key = lambda t: (priority_order.get(t.getPriority(), 3), t.getDuration())
 
-        pinned      = sorted([t for t in all_tasks if t.time != "00:00"], key=sort_key)
-        unscheduled = sorted([t for t in all_tasks if t.time == "00:00"], key=sort_key)
+        pinned      = sorted([t for t in all_tasks if t.has_preferred_time], key=sort_key)
+        unscheduled = sorted([t for t in all_tasks if not t.has_preferred_time], key=sort_key)
 
         # Build occupied intervals from pinned tasks (minutes since midnight)
         occupied: list[list[int]] = []

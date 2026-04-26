@@ -126,6 +126,11 @@ def reschedule_task(task_name: str, pet_name: str, new_time: str) -> dict:
     for task in _schedule.getTasks():
         if task.getName() == task_name and task.pet and task.pet.getName() == pet_name:
             old_time  = task.time
+            try:
+                _h, _m = map(int, new_time.split(":"))
+                new_time = f"{_h:02d}:{_m:02d}"
+            except (ValueError, AttributeError):
+                pass
             task.time = new_time
             return {
                 "success":    True,
@@ -261,7 +266,7 @@ class PawPalAgent:
                 due  = f", due {task.due_date}" if task.due_date else ""
                 pref = (
                     f", preferred start {task.time}"
-                    if task.time and task.time != "00:00"
+                    if task.has_preferred_time
                     else ""
                 )
                 lines.append(

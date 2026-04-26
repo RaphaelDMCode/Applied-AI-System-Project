@@ -59,3 +59,13 @@ Currently, 10 Tests Works but it gave me a warning and 5 not works. The Warning 
 What this Project taught me about AI and problem-solving.
 
 All in all, this Project helped me expand more of my knowledge regarding Coding. Made me learn some new Topics that matter into Coding like Guardrails, Edge Cases and such. I also learned that for some Errors, or Edge Cases, sometimes it is better to fix them manually and sometimes add Guardrails to fix it. Now regarding AI, I've come to learn that the Loops require a sort of Exhaustion like the total Rounds they could do before exhausting them and such. And that I must not just blindly trust all the AI suggestions and take a look at them myself before proceeding.
+
+
+[Walktrhough Videos]
+
+[Before Minor Fixes]
+<img src='Walkthorugh-Applied-AI-Before-Fixes.gif' title='Video Walkthrough' width='' alt='Video Walkthrough' />
+
+
+[After After Fixes]
+<img src='Walkthorugh-Applied-AI-After-Fixes.gif' title='Video Walkthrough' width='' alt='Video Walkthrough' />

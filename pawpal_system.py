@@ -3,6 +3,7 @@
 from __future__ import annotations
 import json
 import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from itertools import combinations
@@ -58,7 +59,17 @@ class Owner:
         return sum(task.getDuration() for task in self.getAllTasks())
     
     def save_to_json(self, filepath: str = "data.json") -> None:
-        """Persist owner, pets, and tasks to a JSON file."""
+        """Persist owner, pets, and tasks to a JSON file.
+
+        Uses an atomic write-then-rename pattern: data is written to a sibling
+        temp file first, then renamed over the target. This guarantees the file
+        on disk is never in a partially-written state — safe against crashes and
+        concurrent Streamlit tab writes.
+
+        Note: this app is designed for single-user local use. Concurrent sessions
+        sharing the same filepath will still overwrite each other's logical state;
+        the atomic write only prevents torn/corrupt bytes on disk.
+        """
         data = {
             "name": self.name,
             "timeAvailability": self.timeAvailability,
@@ -86,8 +97,15 @@ class Owner:
                 for pet in self.pets
             ],
         }
-        with open(filepath, "w") as f:
-            json.dump(data, f, indent=2)
+        target_dir = os.path.dirname(os.path.abspath(filepath))
+        fd, tmp_path = tempfile.mkstemp(dir=target_dir, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, filepath)
+        except Exception:
+            os.unlink(tmp_path)
+            raise
 
     @classmethod
     def load_from_json(cls, filepath: str = "data.json") -> "Owner":
@@ -105,13 +123,26 @@ class Owner:
                 weight=pet_data.get("weight", 0.0),
             )
             for task_data in pet_data.get("tasks", []):
+                for required in ("name", "duration", "priority", "due_date"):
+                    if task_data.get(required) is None:
+                        raise ValueError(
+                            f"Task in pet '{pet_data['name']}' is missing required "
+                            f"field '{required}' in {filepath}"
+                        )
+                try:
+                    due = date.fromisoformat(task_data["due_date"])
+                except (ValueError, TypeError):
+                    raise ValueError(
+                        f"Task '{task_data['name']}' in '{pet_data['name']}' has "
+                        f"invalid due_date '{task_data['due_date']}' in {filepath}"
+                    )
                 task = Task(
                     name=task_data["name"],
                     duration=task_data["duration"],
                     priority=task_data["priority"],
                     time=task_data.get("time", "00:00"),
                     recurrence=task_data.get("recurrence"),
-                    due_date=date.fromisoformat(task_data.get("due_date", date.today().isoformat())),
+                    due_date=due,
                     completed=task_data.get("completed", False),
                 )
                 pet.addTask(task)
@@ -163,6 +194,12 @@ class Pet:
     def addTask(self, task: Task) -> None:
         """Add a task to the pet's task list."""
         if task not in self.tasks:
+            if any(t.getName() == task.getName() and t.due_date == task.due_date
+                   for t in self.tasks):
+                raise ValueError(
+                    f"'{self.name}' already has a task named '{task.getName()}' "
+                    f"due on {task.due_date}. Task names must be unique per pet per day."
+                )
             task.pet = self
             self.tasks.append(task)
     
@@ -201,7 +238,15 @@ class Task:
     due_date: date = field(default_factory=date.today)
     pet: Pet = field(default=None)
     completed: bool = False
-    
+
+    def __post_init__(self):
+        # Normalize time to HH:MM so string equality is reliable everywhere
+        try:
+            h, m = map(int, self.time.split(":"))
+            self.time = f"{h:02d}:{m:02d}"
+        except (ValueError, AttributeError):
+            self.time = "00:00"
+
     def getName(self) -> str:
         """Get the task's name."""
         return self.name
@@ -221,7 +266,12 @@ class Task:
     def markCompleted(self) -> None:
         """Mark this task as completed and schedule the next occurrence if recurring."""
         self.completed = True
-        if self.recurrence and self.pet:
+        if self.recurrence:
+            if self.pet is None:
+                raise ValueError(
+                    f"Task '{self.name}' has recurrence='{self.recurrence}' but is not "
+                    "assigned to a pet. Call pet.addTask() before marking it complete."
+                )
             next_task = self.next_occurrence()
             if next_task is not None:
                 self.pet.addTask(next_task)
@@ -267,24 +317,47 @@ class Schedule:
         self.tasks: List[Task] = []
     
     def generateSchedule(self) -> None:
-        """Generate an optimized schedule based on owner availability and pet tasks."""
-        # Get all tasks from all owned pets
-        all_tasks = self.owner.getAllTasks()
-        
-        # Sort tasks by priority (high first) and then by duration (short first)
-        priority_order = {"high": 0, "medium": 1, "low": 2}
-        sorted_tasks = sorted(
-            all_tasks,
-            key=lambda t: (priority_order.get(t.getPriority(), 3), t.getDuration())
-        )
-        
-        # Assign start times beginning at 08:00, incrementing by each task's duration
-        current_time = datetime(2000, 1, 1, 8, 0)
-        for task in sorted_tasks:
-            task.time = current_time.strftime("%H:%M")
-            current_time += timedelta(minutes=task.getDuration())
+        """Generate an optimized schedule based on owner availability and pet tasks.
 
-        self.tasks = sorted_tasks
+        Tasks with a user-set preferred time (anything other than '00:00') are
+        pinned to that slot. Tasks with no preference are auto-assigned to the
+        earliest available gap starting at 08:00, respecting pinned slots.
+        All tasks are returned sorted by priority then duration.
+        """
+        all_tasks = self.owner.getAllTasks()
+        priority_order = {"high": 0, "medium": 1, "low": 2}
+        sort_key = lambda t: (priority_order.get(t.getPriority(), 3), t.getDuration())
+
+        pinned      = sorted([t for t in all_tasks if t.time != "00:00"], key=sort_key)
+        unscheduled = sorted([t for t in all_tasks if t.time == "00:00"], key=sort_key)
+
+        # Build occupied intervals from pinned tasks (minutes since midnight)
+        occupied: list[list[int]] = []
+        for t in pinned:
+            h, m = map(int, t.time.split(":"))
+            start = h * 60 + m
+            occupied.append([start, start + int(t.getDuration())])
+        occupied.sort()
+
+        DAY_START = 8 * 60  # 08:00
+
+        def _next_free(duration: int) -> int:
+            """Return the earliest start minute that fits without overlapping occupied."""
+            cursor = DAY_START
+            for seg_start, seg_end in occupied:
+                if cursor + duration <= seg_start:
+                    return cursor
+                cursor = max(cursor, seg_end)
+            return cursor
+
+        for task in unscheduled:
+            start_min = _next_free(int(task.getDuration()))
+            h, m = divmod(start_min, 60)
+            task.time = f"{h:02d}:{m:02d}"
+            occupied.append([start_min, start_min + int(task.getDuration())])
+            occupied.sort()
+
+        self.tasks = sorted(pinned + unscheduled, key=sort_key)
     
     def addTask(self, task: Task) -> str | None:
         """Add a task to the schedule.

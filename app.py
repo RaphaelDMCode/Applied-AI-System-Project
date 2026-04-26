@@ -5,6 +5,7 @@ import os
 from datetime import date
 import streamlit as st
 from pawpal_system import Task, Pet, Owner, Schedule
+from agent import PawPalAgent
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 st.title("🐾 PawPal+")
@@ -30,8 +31,8 @@ time_available = st.number_input("Available time today (hours)", min_value=0.5, 
 if st.button("Set / Update Owner"):
     st.session_state.owner = Owner(owner_name, time_available)
     st.session_state.owner.save_to_json()
-    # Clear schedule when owner changes
-    st.session_state.pop("schedule", None)
+    for _k in ("schedule", "agent_explanation", "agent_proposed", "agent_snapshot", "agent_schedule"):
+        st.session_state.pop(_k, None)
 
 # Load saved data only when the user chose to resume
 if "owner" not in st.session_state and st.session_state.get("session_choice") == "resume":
@@ -129,14 +130,26 @@ else:
     with col5:
         due_date_input = st.date_input("Due date", value=date.today())
 
+    use_preferred_time = st.checkbox("Set a preferred start time (optional)")
+    preferred_time_str = "00:00"
+    if use_preferred_time:
+        import datetime as dt
+        preferred_time_val = st.time_input("Preferred start time", value=dt.time(8, 0))
+        preferred_time_str = preferred_time_val.strftime("%H:%M")
+        st.caption("The AI agent will try to honour this time when building your schedule.")
+
     if st.button("Add Task"):
         recurrence_val = None if recurrence_input == "none" else recurrence_input
         new_task = Task(task_title, int(duration), priority,
+                        time=preferred_time_str,
                         recurrence=recurrence_val,
                         due_date=due_date_input)
-        target_pet.addTask(new_task)
-        owner.save_to_json()
-        st.success(f"Task **{task_title}** added to **{target_pet_name}**.")
+        try:
+            target_pet.addTask(new_task)
+            owner.save_to_json()
+            st.success(f"Task **{task_title}** added to **{target_pet_name}**.")
+        except ValueError as e:
+            st.warning(str(e))
 
     all_tasks = owner.getAllTasks()
     if all_tasks:
@@ -241,6 +254,8 @@ if st.button("Generate Schedule"):
         sched = Schedule(owner)
         sched.generateSchedule()
         st.session_state.schedule = sched
+        for _k in ("agent_explanation", "agent_proposed", "agent_snapshot", "agent_schedule"):
+            st.session_state.pop(_k, None)
 
 if "schedule" in st.session_state:
     sched: Schedule = st.session_state.schedule
@@ -339,3 +354,151 @@ if "schedule" in st.session_state:
             st.error("No available slot today for that duration.")
         else:
             st.success(f"Next available slot: **{slot}** — fits {int(slot_duration)} min")
+
+st.divider()
+
+# ── AI Schedule Agent ──────────────────────────────────────────────────────────
+st.subheader("AI Schedule Agent")
+st.caption(
+    "The AI agent analyses your schedule, detects conflicts and overdue tasks, "
+    "suggests fixes, and explains its reasoning. You decide whether to apply the changes."
+)
+
+if not owner.getAllTasks():
+    st.info("Add at least one task before running the AI agent.")
+else:
+    _proposal_pending = "agent_explanation" in st.session_state
+    if _proposal_pending:
+        st.caption("Accept or reject the current proposal before running the agent again.")
+    if st.button("Run AI Agent", type="primary", disabled=_proposal_pending):
+        # Snapshot current task times so Reject can restore them
+        st.session_state.agent_snapshot = {
+            (t.pet.getName() if t.pet else "", t.getName()): t.time
+            for t in owner.getAllTasks()
+        }
+        sched_agent = Schedule(owner)
+        with st.spinner("AI agent is analysing your schedule..."):
+            try:
+                agent = PawPalAgent(sched_agent)
+                explanation, proposed, steps = agent.run()
+            except Exception as e:
+                st.error(f"Agent error: {e}")
+                st.stop()
+        st.session_state.agent_explanation = explanation
+        st.session_state.agent_proposed    = proposed
+        st.session_state.agent_schedule    = sched_agent
+        st.session_state.agent_steps       = steps
+        st.rerun()
+
+    if "agent_explanation" in st.session_state:
+        # ── Reasoning trace ────────────────────────────────────────────────────
+        agent_steps = st.session_state.get("agent_steps", [])
+        if agent_steps:
+            with st.expander(f"🔍 Agent reasoning steps ({len(agent_steps)} tool calls)", expanded=False):
+                for s in agent_steps:
+                    tool  = s["tool"]
+                    args  = s["args"]
+                    result = s["result"]
+
+                    args_str = ", ".join(f"{k}={v!r}" for k, v in args.items()) if args else ""
+                    st.markdown(f"**Step {s['step']}: `{tool}({args_str})`**")
+
+                    if tool == "generate_schedule":
+                        n = result.get("total_tasks", 0)
+                        rows = result.get("tasks", [])
+                        st.caption(f"{n} task(s) scheduled")
+                        if rows:
+                            st.dataframe(
+                                [{"Time": r["time"], "Pet": r["pet"], "Task": r["task"],
+                                  "Priority": r["priority"], "Duration (min)": r["duration_minutes"]}
+                                 for r in rows],
+                                use_container_width=True, hide_index=True,
+                            )
+
+                    elif tool == "get_conflicts":
+                        n = result.get("count", 0)
+                        if n == 0:
+                            st.caption("No conflicts found.")
+                        else:
+                            st.caption(f"{n} conflict(s) detected:")
+                            for c in result.get("conflicts", []):
+                                st.write(f"- **{c['task_a']}** ({c['pet_a']}) vs **{c['task_b']}** ({c['pet_b']}) — both at `{c['shared_time']}`")
+
+                    elif tool == "get_overdue_tasks":
+                        n = result.get("count", 0)
+                        if n == 0:
+                            st.caption("No overdue tasks.")
+                        else:
+                            st.caption(f"{n} overdue task(s):")
+                            for t in result.get("overdue_tasks", []):
+                                st.write(f"- **{t['task']}** ({t['pet']}) — due {t['due_date']}, priority: {t['priority']}")
+
+                    elif tool == "check_capacity":
+                        fits   = result.get("fits_within_availability")
+                        used   = result.get("total_scheduled_minutes", 0)
+                        avail  = result.get("available_minutes", 0)
+                        over   = result.get("over_by_minutes", 0)
+                        status = "✅ Fits" if fits else f"⚠️ Over by {over} min"
+                        st.caption(f"{status} — {used} min used / {avail} min available")
+
+                    elif tool == "find_next_slot":
+                        slot = result.get("available_slot", "—")
+                        dur  = result.get("duration_requested", 0)
+                        st.caption(f"Next open slot for {dur} min: **{slot}**")
+
+                    elif tool == "reschedule_task":
+                        if result.get("success"):
+                            st.caption(
+                                f"Moved **{result['task']}** ({result['pet']}) "
+                                f"from `{result['moved_from']}` → `{result['moved_to']}`"
+                            )
+                        else:
+                            st.caption(f"⚠️ {result.get('message', 'Reschedule failed.')}")
+
+                    else:
+                        st.json(result)
+
+                    st.markdown("---")
+
+        st.markdown("#### Agent's Report")
+        st.info(st.session_state.agent_explanation)
+
+        st.caption("Proposed schedule (read-only — accept or reject below)")
+        st.dataframe(
+            sorted(
+                [
+                    {
+                        "Time":           t["time"],
+                        "Pet":            t["pet"],
+                        "Task":           t["task"],
+                        "Priority":       PRIORITY_BADGE.get(t["priority"], t["priority"]),
+                        "Duration (min)": t["duration_minutes"],
+                    }
+                    for t in st.session_state.agent_proposed
+                ],
+                key=lambda r: r["Time"],
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        col_accept, col_reject = st.columns(2)
+
+        if col_accept.button("Accept Changes", type="primary", use_container_width=True):
+            owner.save_to_json()
+            st.session_state.schedule = st.session_state.agent_schedule
+            for key in ("agent_explanation", "agent_proposed", "agent_snapshot", "agent_schedule", "agent_steps"):
+                st.session_state.pop(key, None)
+            st.success("Schedule accepted and saved.")
+            st.rerun()
+
+        if col_reject.button("Reject Changes", use_container_width=True):
+            snapshot = st.session_state.get("agent_snapshot", {})
+            for t in owner.getAllTasks():
+                key = (t.pet.getName() if t.pet else "", t.getName())
+                if key in snapshot:
+                    t.time = snapshot[key]
+            for key in ("agent_explanation", "agent_proposed", "agent_snapshot", "agent_schedule", "agent_steps"):
+                st.session_state.pop(key, None)
+            st.info("Changes rejected. Original times restored.")
+            st.rerun()

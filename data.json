@@ -1,14 +1,33 @@
 {
-  "name": "Keith",
+  "name": "Raphael",
   "timeAvailability": 5.0,
   "pets": [
     {
       "name": "Haru",
       "type": "dog",
-      "ownerPreferences": "Prefers morning walks",
+      "ownerPreferences": "Prefers Afternoon Walks",
       "breed": "Shiba Inu",
       "age": 1.0,
-      "weight": 10.0,
+      "weight": 9.0,
+      "tasks": [
+        {
+          "name": "Morning walk",
+          "duration": 20,
+          "priority": "high",
+          "time": "00:00",
+          "recurrence": null,
+          "due_date": "2026-04-23",
+          "completed": false
+        }
+      ]
+    },
+    {
+      "name": "El Gato",
+      "type": "cat",
+      "ownerPreferences": "Prefers  Afternoon Groom",
+      "breed": "Orange",
+      "age": 2.0,
+      "weight": 8.0,
       "tasks": []
     }
   ]

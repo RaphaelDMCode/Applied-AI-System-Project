@@ -1,3 +1,4 @@
+import os
 import pytest
 from datetime import date, timedelta
 from pawpal_system import Task, Pet, Owner, Schedule
@@ -177,3 +178,85 @@ def test_has_conflicts_false_when_no_duplicates():
     schedule.addTask(Task(name="Meds", duration=0.1, priority="high",   time="20:00"))
 
     assert not schedule.hasConflicts(), "No conflicts expected with unique times"
+
+
+# --- AI Agent Evaluation (integration tests — require GEMINI_API_KEY) ----------
+
+@pytest.fixture(scope="module")
+def agent_result():
+    """Run PawPalAgent once for the whole module. Skips if no API key is found."""
+    from dotenv import load_dotenv
+    from agent import PawPalAgent
+
+    load_dotenv()
+    if not os.getenv("GEMINI_API_KEY"):
+        pytest.skip("GEMINI_API_KEY not set — skipping agent integration tests")
+
+    owner = Owner("TestOwner", 4.0)
+    rocky = Pet("Rocky", "dog", "Prefers morning walks", breed="Labrador", age=3.0, weight=65.0)
+    mochi = Pet("Mochi", "cat", "Indoors only",          breed="Mixed",    age=1.0, weight=10.0)
+
+    rocky.addTask(Task("Morning walk", 30, "high",   time="08:00", due_date=date.today()))
+    rocky.addTask(Task("Feeding",      10, "low",    time="00:00", due_date=date.today()))
+    mochi.addTask(Task("Medication",   15, "high",   time="08:00", due_date=date.today()))
+    mochi.addTask(Task("Grooming",     45, "medium", time="00:00",
+                       due_date=date.today() - timedelta(days=2)))
+
+    owner.addPet(rocky)
+    owner.addPet(mochi)
+
+    sched = Schedule(owner)
+    agent = PawPalAgent(sched)
+    explanation, proposed = agent.run()
+    return explanation, proposed, sched
+
+
+def test_agent_produces_no_conflicts(agent_result):
+    """After the agent runs, the proposed schedule must have zero time conflicts."""
+    _, _, sched = agent_result
+    conflicts = sched.getConflicts()
+    assert len(conflicts) == 0, f"Agent left {len(conflicts)} unresolved conflict(s)"
+
+
+def test_agent_fits_within_capacity(agent_result):
+    """The proposed schedule must fit within the owner's available hours."""
+    _, _, sched = agent_result
+    assert sched.canFitSchedule(), "Agent produced a schedule that exceeds the owner's available time"
+
+
+def test_agent_explanation_mentions_a_pet(agent_result):
+    """The explanation must be non-empty and name at least one pet."""
+    explanation, _, _ = agent_result
+    assert isinstance(explanation, str) and len(explanation) > 0, \
+        "Explanation should be a non-empty string"
+    assert any(name in explanation for name in ("Rocky", "Mochi")), \
+        f"Explanation should name at least one pet; got: {explanation!r}"
+
+
+def test_agent_surfaces_overdue_task(agent_result):
+    """The explanation must acknowledge the overdue Grooming task."""
+    explanation, _, _ = agent_result
+    lower = explanation.lower()
+    assert "grooming" in lower or "overdue" in lower, \
+        f"Explanation should mention the overdue Grooming task; got: {explanation!r}"
+
+
+def test_agent_accept_saves_and_reloads_schedule(agent_result, tmp_path):
+    """End-to-end: accept flow saves proposed times to JSON and reloads correctly."""
+    explanation, proposed, sched = agent_result
+
+    filepath = str(tmp_path / "test_data.json")
+    sched.owner.save_to_json(filepath)
+
+    reloaded = Owner.load_from_json(filepath)
+    reloaded_times = {
+        (t.pet.getName() if t.pet else "", t.getName()): t.time
+        for t in reloaded.getAllTasks()
+    }
+
+    for task in proposed:
+        key = (task["pet"], task["task"])
+        assert key in reloaded_times, f"Task {key} missing from reloaded JSON"
+        assert reloaded_times[key] == task["time"], (
+            f"Time mismatch for {key}: expected {task['time']}, got {reloaded_times[key]}"
+        )

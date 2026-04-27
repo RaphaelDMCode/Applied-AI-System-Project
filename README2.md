@@ -2,6 +2,9 @@
 
 **PawPal+** is a Smart Care Management System. Its purpose is to create a Schedule of the User’s Pet’s Tasks. It gathers the User’s Data (User Info, Pet Info, Task Info, etc) and gathers that up to form a Schedule that matches the User’s Preferences.
 
+# Project Artifact
+https://docs.google.com/document/d/1qQ_9KtaRP4mS_quJHmuH_saC28Tj9gLEomJLMOA_rLk/edit?tab=t.0
+
 # PawPal+ with AI Features:
 Explain what the Project with the AI Features Does and why it matters.
 
